@@ -15,14 +15,20 @@ class MapVisualizer:
         if sys.platform == 'win32':
             self.system_encoding = 'cp1251'
 
-        # Читаем игровые константы
-        self.read_game_constants()
+        # Находим рабочую директорию с файлами
+        self.game_dir = self.find_game_directory()
+        if not self.game_dir:
+            raise FileNotFoundError("Не найдена директория с игровыми файлами")
 
         # Читаем размеры карты из ANT.DAT
         self.map_width, self.map_height = self.read_map_dimensions()
 
-        # Загружаем фоновое изображение
-        self.original_background = pygame.image.load('MAP.bmp')
+        # Читаем игровые константы
+        self.read_game_constants()
+
+        # Загружаем фоновое изображение с учетом регистра
+        map_file = self.find_file('MAP.BMP')
+        self.original_background = pygame.image.load(map_file)
         self.aspect_ratio = self.original_background.get_width() / self.original_background.get_height()
         
         # Создаем одну поверхность для всего содержимого
@@ -41,24 +47,33 @@ class MapVisualizer:
         self.cell_width = width / self.map_width
         self.cell_height = height / self.map_height
         
-        # Для элементов интерфейса используем минимальный размер
-        self.cell_size = min(self.cell_width, self.cell_height)
+        # Для элементов интерфейса используем высоту клетки
+        self.cell_size = self.cell_height  # Изменено с min() на высоту клетки
         
         # Устанавливаем размер шрифта и высоту панели
-        self.font = pygame.font.Font(None, int(self.cell_size))
-        self.panel_height = int(self.cell_size * 1.5)
+        self.font = pygame.font.Font(None, int(self.cell_height * 0.7))  # 70% от высоты клетки
+        self.panel_height = int(self.cell_height * 1.5)
         
-        # Инициализируем размеры окна
+        # Добавляем параметры для панели игроков
+        self.player_panel_height = int(self.cell_height * 2)  # Высота панели игроков
+        self.color_rect_width = 30  # Ширина цветного прямоугольника для каждого игрока
+        self.color_rect_height = 20  # Высота цветного прямоугольника
+        self.color_spacing = 5  # Расстояние между цветными прямоугольниками
+        
+        # Обновляем размеры окна с учетом обеих панелей
         self.screen_width = self.canvas_width
-        self.screen_height = self.canvas_height + self.panel_height
+        self.screen_height = self.canvas_height + self.panel_height + self.player_panel_height
         
-        # Инициализируем позицию панели управления
+        # Позиции панелей
         self.panel_y = self.canvas_height
+        self.player_panel_y = self.panel_y + self.panel_height
         
+        # Инициализируем списки для хранения данных игроков
+        self.current_players = []
+        self.selected_player = None
+        
+        # Создаем окно с новыми размерами
         self.screen = pygame.display.set_mode((self.screen_width, self.screen_height), pygame.RESIZABLE)
-        
-        # Установка заголовка окна с учетом кодировки
-        pygame.display.set_caption("Визуализация карты")
         
         # Словарь для игровых элементов
         self.game_objects = {
@@ -85,12 +100,20 @@ class MapVisualizer:
 
         self.current_turn = 0
         self.max_turn = self.find_max_turn()
+        
+        # Загружаем данные игроков из нулевого хода
+        print("Начинаем загрузку данных игроков...")
+        self.load_initial_players()
+        print(f"Загружено игроков: {len(self.current_players)}")
+        
         self.cell_size = self.calculate_cell_size()
-        self.font = pygame.font.Font(None, 36)
+        self.font = pygame.font.Font(None, int(self.cell_height * 0.7))  # 70% от высоты клетки
 
-        # Загружаем изображения пиктограмм
-        self.army_icons = self.load_icons('OSNOVA.BMP', 16)  # 16 иконок армий/строений
-        self.mine_icons = self.load_icons('RUDNICI.BMP', 4)  # 4 иконки рудников
+        # Загружаем изображения пиктограмм с учетом регистра
+        osnova_file = self.find_file('OSNOVA.BMP')
+        rudnici_file = self.find_file('RUDNICI.BMP')
+        self.army_icons = self.load_icons(osnova_file, 16)  # 16 иконок армий/строений
+        self.mine_icons = self.load_icons(rudnici_file, 4)  # 4 иконки рудников
         
         # Словарь соответствия символов и индексов иконок
         self.icon_indices = {
@@ -137,111 +160,172 @@ class MapVisualizer:
         self.base_cell_height = self.cell_height
         self.base_cell_size = min(self.base_cell_width, self.base_cell_height)
 
+        # Создаем поверхность для подсветки клетки
+        self.highlight_surface = pygame.Surface((self.cell_width, self.cell_height))
+        self.highlight_surface.set_alpha(64)  # Полупрозрачность (0-255)
+        self.highlight_surface.fill((255, 255, 255))  # Белый цвет
+        
+        # Скрываем курсор
+        pygame.mouse.set_visible(True)  # Изначально показываем курсор
+
+        # Шрифт для всплывающего окна
+        self.tooltip_font = pygame.font.Font(None, int(self.cell_height * 1.1))  # 50% от высоты клетки
+
+        # Добавляем атрибут для хранения объектов текущего хода
+        self.current_turn_objects = []
+
     def read_game_constants(self):
         """Читает размеры поля из ANT.DAT и цвета игроков из нулевого хода"""
         # Чтение ANT.DAT
         try:
-            with open('ANT.DAT', 'r', encoding=self.system_encoding) as f:
-                lines = f.readlines()
-                # Строка 2 - ширина поля
-                # Строка 3 - высота поля
-                self.map_width = int(lines[1].strip())
-                self.map_height = int(lines[2].strip())
+            ant_file = self.find_file('ANT.DAT')
+            with open(ant_file, 'rb') as file:
+                content = file.read()
+                # Пробуем разные кодировки
+                for encoding in ['cp1251', 'cp866', 'utf-8']:
+                    try:
+                        text = content.decode(encoding)
+                        lines = text.split('\n')
+                        self.map_width = int(lines[1].strip())
+                        self.map_height = int(lines[2].strip())
+                        break
+                    except UnicodeDecodeError:
+                        continue
         except Exception as e:
             print(f"Ошибка чтения ANT.DAT: {e}")
-            self.map_width = 0
-            self.map_height = 0
+            self.map_width = 130  # Значения по умолчанию
+            self.map_height = 57
 
         # Чтение цветов игроков из нулевого хода
         try:
-            with open('Год0.svs', 'rb') as f:
-                content = f.read().decode('cp1251')
-                lines = content.split('\n')
-                self.player_colors = {}
-                
-                current_player = None
-                for line in lines:
-                    if line.startswith('Player'):
-                        continue
-                    elif len(line.split()) >= 3:
-                        parts = line.split()
-                        if len(parts) >= 3 and parts[0].isdigit():
-                            # Строка с координатами и цветом игрока
-                            try:
-                                color = int(parts[2])
-                                if current_player:
-                                    self.player_colors[current_player] = color
-                            except ValueError:
-                                continue
-                    else:
-                        # Строка с именем игрока
-                        current_player = line.strip()
+            # Проверяем оба варианта именования нулевого хода
+            turn0_file = None
+            for name in ['Год0.svs', 'год0.svs', '®¤0.svs']:
+                full_path = os.path.join(self.game_dir, name)
+                if os.path.exists(full_path):
+                    turn0_file = full_path
+                    break
+
+            if turn0_file:
+                with open(turn0_file, 'rb') as f:
+                    content = f.read()
+                    # Пробуем разные кодировки
+                    for encoding in ['cp1251', 'cp866', 'utf-8']:
+                        try:
+                            text = content.decode(encoding)
+                            lines = text.split('\n')
+                            self.player_colors = {}
+                            
+                            current_player = None
+                            for line in lines:
+                                if line.startswith('Player'):
+                                    continue
+                                elif len(line.split()) >= 3:
+                                    parts = line.split()
+                                    if len(parts) >= 3 and parts[0].isdigit():
+                                        # Строка с координатами и цветом игрока
+                                        try:
+                                            color = int(parts[2])
+                                            if current_player:
+                                                self.player_colors[current_player] = color
+                                        except ValueError:
+                                            continue
+                                else:
+                                    # Строка с именем игрока
+                                    current_player = line.strip()
+                        except UnicodeDecodeError:
+                            continue
         except Exception as e:
             print(f"Ошибка чтения Год0.svs: {e}")
             self.player_colors = {}
 
     def load_turn_data(self, turn):
-        filename = f'Год{turn}.svs'
-        objects = []
-        players_info = []  # Список для хранения информации об игроках
-        current_player = None
-        
+        """Загрузка данных хода"""
         try:
-            with open(filename, 'rb') as file:
+            # Ищем файл хода с учетом обоих вариантов именования
+            turn_file = None
+            
+            # Проверяем все возможные варианты имени файла
+            possible_names = [
+                f'Год{turn}.svs',
+                f'год{turn}.svs',
+                f'®¤{turn}.svs'
+            ]
+            
+            for name in possible_names:
+                full_path = os.path.join(self.game_dir, name)
+                if os.path.exists(full_path):
+                    turn_file = full_path
+                    break
+
+            if not turn_file:
+                return []
+
+            with open(turn_file, 'rb') as file:
                 content = file.read()
-                text = content.decode('cp1251')
-                lines = text.split('\n')
-                
-                for line in lines:
-                    line = line.strip().rstrip(',').strip()
-                    
-                    if line.startswith('Player'):
+                # Пробуем разные кодировки
+                for encoding in ['cp1251', 'cp866', 'utf-8']:
+                    try:
+                        text = content.decode(encoding)
+                        lines = text.split('\n')
+                        
+                        objects = []
+                        players_info = []  # Список для хранения информации об игроках
+                        current_player = None
+                        
+                        for line in lines:
+                            line = line.strip().rstrip(',').strip()
+                            
+                            if line.startswith('Player'):
+                                if current_player:
+                                    players_info.append(current_player)
+                                current_player = {'objects': []}
+                                continue
+                            
+                            if not line or line.startswith('END'):
+                                continue
+                            
+                            # Проверяем, является ли строка информацией об игроке
+                            if current_player is not None and len(line.split()) < 3:
+                                # Парсим имя игрока и название страны
+                                match = re.match(r'(.*?)\s*\((.*?)\)', line)
+                                if match:
+                                    current_player['name'] = match.group(1).strip()
+                                    current_player['country'] = match.group(2).strip()
+                                continue
+                            
+                            # Парсим координаты объекта
+                            parts = [part.strip() for part in line.split() if part.strip()]
+                            if len(parts) >= 3:
+                                obj_type = parts[0]
+                                if obj_type in self.game_objects:
+                                    try:
+                                        x = int(parts[1])
+                                        y = int(parts[2])
+                                        state = int(parts[3].rstrip(',')) if len(parts) > 3 else 0
+                                        obj = (obj_type, x, y, state)
+                                        objects.append(obj)
+                                        if current_player:
+                                            current_player['objects'].append(obj)
+                                    except (ValueError, IndexError) as e:
+                                        print(f"Ошибка парсинга строки '{line}': {e}")
+                                else:
+                                    # Пропускаем неизвестные типы объектов без вывода ошибки
+                                    continue
+                        
+                        # Добавляем последнего игрока
                         if current_player:
                             players_info.append(current_player)
-                        current_player = {'objects': []}
+                        
+                        # Сохраняем информацию об игроках
+                        self.current_players = players_info
+                        return objects
+                    except UnicodeDecodeError:
                         continue
-                    
-                    if not line or line.startswith('END'):
-                        continue
-                    
-                    # Проверяем, является ли строка информацией об игроке
-                    if current_player is not None and len(line.split()) < 3:
-                        # Парсим имя игрока и название страны
-                        match = re.match(r'(.*?)\s*\((.*?)\)', line)
-                        if match:
-                            current_player['name'] = match.group(1).strip()
-                            current_player['country'] = match.group(2).strip()
-                        continue
-                    
-                    # Парсим координаты объекта
-                    parts = [part.strip() for part in line.split() if part.strip()]
-                    if len(parts) >= 3:
-                        obj_type = parts[0]
-                        if obj_type in self.game_objects:
-                            try:
-                                x = int(parts[1])
-                                y = int(parts[2])
-                                state = int(parts[3].rstrip(',')) if len(parts) > 3 else 0
-                                obj = (obj_type, x, y, state)
-                                objects.append(obj)
-                                if current_player:
-                                    current_player['objects'].append(obj)
-                            except (ValueError, IndexError) as e:
-                                print(f"Ошибка парсинга строки '{line}': {e}")
-                        else:
-                            # Пропускаем неизвестные типы объектов без вывода ошибки
-                            continue
-                
-                # Добавляем последнего игрока
-                if current_player:
-                    players_info.append(current_player)
-                
-        except (FileNotFoundError, UnicodeDecodeError) as e:
+                        
+        except Exception as e:
             print(f"Ошибка загрузки хода {turn}: {e}")
-        
-        # Сохраняем информацию об игроках
-        self.current_players = players_info
-        return objects
+            return []
 
     def load_icons(self, filename, count):
         """Загружает и разделяет изображение на отдельные иконки"""
@@ -268,6 +352,10 @@ class MapVisualizer:
             return []
 
     def draw_game_objects(self, objects):
+        """Отрисовка игровых объектов"""
+        # Сохраняем объекты текущего хода
+        self.current_turn_objects = objects
+        
         # Получаем коэффициенты масштабирования
         scale_x = self.scaled_canvas.get_width() / self.canvas_width
         scale_y = self.scaled_canvas.get_height() / self.canvas_height
@@ -356,50 +444,158 @@ class MapVisualizer:
             # if state & 64:  # На воде
             #     pygame.draw.circle(self.screen, (0, 0, 255), circle_center, icon_size // 2 + 4, 2)
 
+        # После отрисовки всех объектов добавляем подсветку текущей клетки
+        mouse_pos = pygame.mouse.get_pos()
+        self.draw_cell_highlight(mouse_pos)
+
+    def draw_cell_highlight(self, mouse_pos):
+        """Отрисовка подсветки клетки под курсором"""
+        # Получаем коэффициенты масштабирования
+        scale_x = self.scaled_canvas.get_width() / self.canvas_width
+        scale_y = self.scaled_canvas.get_height() / self.canvas_height
+        
+        # Получаем смещение канвы для центрирования
+        canvas_x = (self.screen_width - self.scaled_canvas.get_width()) // 2
+        canvas_y = 0
+        
+        # Проверяем, находится ли курсор в пределах канвы
+        canvas_rect = pygame.Rect(
+            canvas_x, 
+            0, 
+            self.scaled_canvas.get_width(), 
+            self.scaled_canvas.get_height()
+        )
+        
+        if not canvas_rect.collidepoint(mouse_pos):
+            pygame.mouse.set_visible(True)
+            return
+            
+        pygame.mouse.set_visible(False)
+        
+        # Преобразуем координаты мыши в координаты внутри канвы
+        field_x = (mouse_pos[0] - canvas_x) / scale_x
+        field_y = mouse_pos[1] / scale_y
+        
+        # Получаем границы игрового поля
+        field_left, field_top, field_width, field_height = self.field_bounds
+        
+        # Проверяем, находится ли курсор в пределах игрового поля
+        if (field_left <= field_x <= field_left + field_width and 
+            field_top <= field_y <= field_top + field_height):
+            
+            # Вычисляем индексы клетки (с учетом того, что игровые координаты начинаются с 1)
+            cell_x = int((field_x - field_left) / self.base_cell_width)
+            cell_y = int((field_y - field_top) / self.base_cell_height)
+            
+            # Проверяем, находится ли клетка в пределах сетки
+            if 0 <= cell_x < self.map_width and 0 <= cell_y < self.map_height:
+                # Рассчитываем координаты в оригинальном масштабе
+                original_x = field_left + cell_x * self.base_cell_width
+                original_y = field_top + cell_y * self.base_cell_height
+                
+                # Масштабируем координаты
+                scaled_x = canvas_x + original_x * scale_x
+                scaled_y = original_y * scale_y
+                
+                # Вычисляем размер иконки как для зданий
+                icon_size = int(min(self.base_cell_width, self.base_cell_height) * scale_x)
+                
+                # Вычисляем центр клетки
+                cell_center_x = scaled_x + (self.base_cell_width * scale_x) / 2
+                cell_center_y = scaled_y + (self.base_cell_height * scale_y) / 2
+                
+                # Создаем прямоугольник для подсветки относительно центра клетки
+                rect = pygame.Rect(
+                    int(cell_center_x - icon_size // 2),
+                    int(cell_center_y - icon_size // 2),
+                    icon_size,
+                    icon_size
+                )
+                
+                # Создаем поверхность для подсветки
+                highlight_surface = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+                highlight_surface.fill((255, 255, 255, 64))
+                
+                # Отрисовываем подсветку
+                self.screen.blit(highlight_surface, rect)
+                
+                # Рисуем контур
+                pygame.draw.rect(self.screen, (255, 255, 255), rect, 1)
+                
+                # Отрисовываем всплывающее окно только для подсвеченной клетки
+                terrain_type = self.get_cell_terrain(cell_x, cell_y)
+                self.draw_coordinates_tooltip((cell_center_x, cell_center_y), cell_x, cell_y, terrain_type)
+
     def draw_interface(self):
         """Отрисовка интерфейса управления"""
-        # Отрисовка панели управления
+        # Отрисовка основной панели управления
         panel_rect = pygame.Rect(0, self.panel_y, self.screen_width, self.panel_height)
         pygame.draw.rect(self.screen, (200, 200, 200), panel_rect)
         
-        # Кнопки управления
+        # Отрисовка кнопок навигации
         button_width = 100
-        button_height = int(self.panel_height * 0.8)
-        button_y = self.panel_y + (self.panel_height - button_height) // 2
+        button_height = 30
+        button_margin = 10
         
-        # Кнопка "Предыдущий ход"
-        prev_button = pygame.Rect(
-            10,
-            button_y,
-            button_width,
-            button_height
-        )
-        pygame.draw.rect(self.screen, (150, 150, 150), prev_button)
-        prev_text = self.font.render("<-", True, (0, 0, 0))
-        self.screen.blit(prev_text, (
-            prev_button.centerx - prev_text.get_width() // 2,
-            prev_button.centery - prev_text.get_height() // 2
-        ))
+        prev_button = pygame.Rect(button_margin, 
+                                self.panel_y + (self.panel_height - button_height) // 2,
+                                button_width, button_height)
+        next_button = pygame.Rect(button_margin * 2 + button_width,
+                                self.panel_y + (self.panel_height - button_height) // 2,
+                                button_width, button_height)
         
-        # Кнопка "Следующий ход"
-        next_button = pygame.Rect(
-            120,
-            button_y,
-            button_width,
-            button_height
-        )
-        pygame.draw.rect(self.screen, (150, 150, 150), next_button)
-        next_text = self.font.render("->", True, (0, 0, 0))
-        self.screen.blit(next_text, (
-            next_button.centerx - next_text.get_width() // 2,
-            next_button.centery - next_text.get_height() // 2
-        ))
+        pygame.draw.rect(self.screen, (180, 180, 180), prev_button)
+        pygame.draw.rect(self.screen, (180, 180, 180), next_button)
         
-        # Отображение текущего хода
+        # Отрисовка текста на кнопках
+        prev_text = self.font.render("Пред", True, (0, 0, 0))
+        next_text = self.font.render("След", True, (0, 0, 0))
+        
+        prev_text_rect = prev_text.get_rect(center=prev_button.center)
+        next_text_rect = next_text.get_rect(center=next_button.center)
+        
+        self.screen.blit(prev_text, prev_text_rect)
+        self.screen.blit(next_text, next_text_rect)
+        
+        # Отрисовка номера текущего хода
         turn_text = self.font.render(f"Ход: {self.current_turn}", True, (0, 0, 0))
-        self.screen.blit(turn_text, (250, button_y + (button_height - turn_text.get_height()) // 2))
+        turn_rect = turn_text.get_rect(midleft=(button_margin * 3 + button_width * 2,
+                                               self.panel_y + self.panel_height // 2))
+        self.screen.blit(turn_text, turn_rect)
         
-        return [prev_button, next_button]
+        # Отрисовка панели игроков
+        player_panel_rect = pygame.Rect(0, self.player_panel_y, 
+                                      self.screen_width, self.player_panel_height)
+        pygame.draw.rect(self.screen, (220, 220, 220), player_panel_rect)
+        
+        # Отрисовка цветных прямоугольников игроков
+        x = 10
+        player_rects = []
+        
+        for player in self.current_players:
+            color = player.get('color', 0)
+            # Преобразуем число в RGB
+            r = (color >> 16) & 255
+            g = (color >> 8) & 255
+            b = color & 255
+            
+            rect = pygame.Rect(x, self.player_panel_y + 5, 
+                             self.color_rect_width, self.color_rect_height)
+            pygame.draw.rect(self.screen, (r, g, b), rect)
+            pygame.draw.rect(self.screen, (0, 0, 0), rect, 1)  # Рамка
+            
+            player_rects.append((rect, player))
+            x += self.color_rect_width + self.color_spacing
+        
+        # Отображение информации о выбранном игроке
+        if self.selected_player:
+            info_y = self.player_panel_y + self.color_rect_height + 10
+            name = self.selected_player.get('name', '')
+            name_surface = self.font.render(f"Игрок: {name}", True, (0, 0, 0))
+            self.screen.blit(name_surface, (10, info_y))
+        
+        # Возвращаем все интерактивные элементы
+        return [prev_button, next_button] + [rect for rect, _ in player_rects]
 
     def handle_resize(self, width, height):
         """Обработка изменения размера окна"""
@@ -411,7 +607,7 @@ class MapVisualizer:
         self.screen = pygame.display.set_mode((width, height), pygame.RESIZABLE)
         
         # Вычисляем новые размеры канвы с сохранением пропорций
-        available_height = height - self.panel_height
+        available_height = height - self.panel_height - self.player_panel_height
         canvas_height = available_height
         canvas_width = int(canvas_height * self.aspect_ratio)
         
@@ -419,86 +615,89 @@ class MapVisualizer:
             canvas_width = width
             canvas_height = int(width / self.aspect_ratio)
         
-        # Масштабируем канву целиком
+        # Масштабируем канву
         self.scaled_canvas = pygame.transform.scale(self.canvas, (canvas_width, canvas_height))
         
-        # Обновляем позицию панели управления
-        self.panel_y = canvas_height  # Панель начинается сразу после канвы
-        
-        # Пересчитываем размеры клеток и границы поля
-        if hasattr(self, 'field_bounds'):
-            scale_x = canvas_width / self.canvas_width
-            scale_y = canvas_height / self.canvas_height
-            
-            # Обновляем границы поля с учетом масштаба
-            left, top, width, height = self.field_bounds
-            self.scaled_bounds = (
-                int(left * scale_x),
-                int(top * scale_y),
-                int(width * scale_x),
-                int(height * scale_y)
-            )
-            
-            # Обновляем размеры клеток
-            self.cell_width = self.scaled_bounds[2] / self.map_width
-            self.cell_height = self.scaled_bounds[3] / self.map_height
-            self.cell_size = min(self.cell_width, self.cell_height)
-            
-            # Обновляем размер шрифта и высоту панели
-            self.font = pygame.font.Font(None, int(self.cell_size))
-            self.panel_height = int(self.cell_size * 1.5)
+        # Обновляем позиции панелей
+        self.panel_y = canvas_height
+        self.player_panel_y = self.panel_y + self.panel_height
 
-    def draw_coordinates_tooltip(self, mouse_pos):
-        # Получаем коэффициенты масштабирования и смещение канвы
-        scale_x = self.scaled_canvas.get_width() / self.canvas_width
-        canvas_x = (self.screen_width - self.scaled_canvas.get_width()) // 2
+    def draw_coordinates_tooltip(self, pos, cell_x, cell_y, terrain_type):
+        """Отрисовка всплывающего окна с информацией о клетке"""
+        # Получаем тип местности
+        terrain_info = self.get_terrain_info(terrain_type)
         
-        # Преобразуем координаты мыши в координаты игрового поля
-        field_x = (mouse_pos[0] - canvas_x) / scale_x
-        field_y = mouse_pos[1] / scale_x  # Используем scale_x для сохранения пропорций
+        # Формируем список строк для отображения
+        lines = []
         
-        # Вычисляем координаты клетки с учетом границ поля
-        cell_x = int((field_x - self.field_bounds[0]) / self.base_cell_width) + 1
-        cell_y = int((field_y - self.field_bounds[1]) / self.base_cell_height) + 1
+        # Координаты и тип местности в первой строке
+        coord_text = f"({cell_x + 1}-{cell_y + 1})"
+        if terrain_info:
+            coord_text += f" - {terrain_info}"
+        lines.append(coord_text)
         
-        # Проверяем, находится ли курсор в пределах игрового поля
-        if 1 <= cell_x <= self.map_width and 1 <= cell_y <= self.map_height:
-            # Создаем текст координат
-            coords_text = f"({cell_x}-{cell_y})"
-            coords_surf = self.font.render(coords_text, True, (0, 0, 0))
+        # Добавляем информацию о строениях
+        buildings = self.get_cell_buildings(cell_x, cell_y)
+        if buildings:
+            lines.append("")  # Пустая строка для разделения
+            for building in buildings:
+                owner = self.get_building_owner(cell_x, cell_y, building)
+                if owner:
+                    lines.append(f"{building} (Игрок {owner})")
+                else:
+                    lines.append(building)
+        
+        # Добавляем информацию о войсках
+        armies = self.get_cell_armies(cell_x, cell_y)
+        if armies:
+            if not buildings:
+                lines.append("")  # Пустая строка для разделения
+            for army in armies:
+                owner = self.get_army_owner(cell_x, cell_y, army)
+                if owner:
+                    lines.append(f"{army} (Игрок {owner})")
+                else:
+                    lines.append(army)
+        
+        # Вычисляем размеры окна
+        padding = 5
+        line_height = self.tooltip_font.get_height()
+        max_width = 0
+        
+        # Получаем максимальную ширину текста
+        for line in lines:
+            text_surface = self.tooltip_font.render(line, True, (0, 0, 0))
+            max_width = max(max_width, text_surface.get_width())
+        
+        tooltip_width = max_width + (padding * 2)
+        tooltip_height = (len(lines) * line_height) + (padding * 2)
+        
+        # Определяем позицию окна относительно центра клетки
+        tooltip_x = pos[0] + 10
+        tooltip_y = pos[1] - tooltip_height - 10
+        
+        # Корректируем позицию, чтобы окно не выходило за пределы экрана
+        if tooltip_x + tooltip_width > self.screen_width:
+            tooltip_x = pos[0] - tooltip_width - 10
+        if tooltip_x < 0:
+            tooltip_x = 10
             
-            # Размеры всплывающего окна с учетом отступов
-            padding = 2
-            tooltip_width = coords_surf.get_width() + padding * 2
-            tooltip_height = coords_surf.get_height() + padding * 2
-            
-            # Позиционирование относительно курсора
-            tooltip_x = mouse_pos[0] + 10
-            tooltip_y = mouse_pos[1] - tooltip_height - 10
-            
-            # Корректируем позицию, чтобы окно не выходило за пределы экрана
-            if tooltip_x + tooltip_width > self.screen_width:
-                tooltip_x = mouse_pos[0] - tooltip_width - 10
-            if tooltip_x < 0:
-                tooltip_x = 10
-                
-            if tooltip_y < 0:
-                tooltip_y = mouse_pos[1] + 10
-            if tooltip_y + tooltip_height > self.panel_y:  # Учитываем панель управления
-                tooltip_y = self.panel_y - tooltip_height - 10
-            
-            # Создаем и отрисовываем фон
-            background_rect = pygame.Rect(
-                tooltip_x,
-                tooltip_y,
-                tooltip_width,
-                tooltip_height
-            )
-            pygame.draw.rect(self.screen, (255, 255, 255), background_rect)
-            pygame.draw.rect(self.screen, (0, 0, 0), background_rect, 1)
-            
-            # Отрисовываем текст с учетом отступов
-            self.screen.blit(coords_surf, (tooltip_x + padding, tooltip_y + padding))
+        if tooltip_y < 0:
+            tooltip_y = pos[1] + 10
+        if tooltip_y + tooltip_height > self.panel_y:
+            tooltip_y = self.panel_y - tooltip_height - 10
+        
+        # Отрисовываем фон
+        background_rect = pygame.Rect(tooltip_x, tooltip_y, tooltip_width, tooltip_height)
+        pygame.draw.rect(self.screen, (255, 255, 255), background_rect)
+        pygame.draw.rect(self.screen, (0, 0, 0), background_rect, 1)
+        
+        # Отрисовываем текст
+        current_y = tooltip_y + padding
+        for line in lines:
+            text_surface = self.tooltip_font.render(line, True, (0, 0, 0))
+            self.screen.blit(text_surface, (tooltip_x + padding, current_y))
+            current_y += line_height
 
     def draw_canvas(self):
         """Отрисовка канвы"""
@@ -519,39 +718,30 @@ class MapVisualizer:
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.VIDEORESIZE:
+                    # Запоминаем текущие размеры окна
                     self.handle_resize(event.w, event.h)
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     mouse_pos = pygame.mouse.get_pos()
-                    if button_rects[0].collidepoint(mouse_pos):
+                    button_rects = self.draw_interface()
+                    
+                    # Проверяем клик по кнопкам навигации
+                    if button_rects[0].collidepoint(mouse_pos):  # Предыдущий ход
                         self.current_turn = max(0, self.current_turn - 1)
-                    elif button_rects[1].collidepoint(mouse_pos):
+                    elif button_rects[1].collidepoint(mouse_pos):  # Следующий ход
                         self.current_turn = min(self.max_turn, self.current_turn + 1)
+                    
+                    # Проверяем клик по прямоугольникам игроков
+                    for i in range(2, len(button_rects)):
+                        if button_rects[i].collidepoint(mouse_pos):
+                            self.selected_player = self.current_players[i-2]
+                            break
 
-            # Очистка экрана
+            # Отрисовка всего интерфейса
             self.screen.fill((255, 255, 255))
-            
-            # Отрисовка канвы с рамкой и фоном
             self.draw_canvas()
-            
-            # Загрузка и отрисовка объектов текущего хода
             turn_objects = self.load_turn_data(self.current_turn)
             self.draw_game_objects(turn_objects)
-            
-            # Отрисовка интерфейса
-            button_rects = self.draw_interface()
-            
-            # Отрисовка координат
-            mouse_pos = pygame.mouse.get_pos()
-            self.draw_coordinates_tooltip(mouse_pos)
-            
-            pygame.display.flip()
-            
-            # Отрисовка интерфейса
-            button_rects = self.draw_interface()
-            
-            # Отрисовка координат
-            mouse_pos = pygame.mouse.get_pos()
-            self.draw_coordinates_tooltip(mouse_pos)
+            self.draw_interface()
             
             pygame.display.flip()
         
@@ -559,12 +749,24 @@ class MapVisualizer:
 
     def find_max_turn(self):
         max_turn = 0
-        for file in Path('.').glob('Год*.svs'):
-            try:
-                turn = int(re.search(r'Год(\d+)\.svs', file.name).group(1))
-                max_turn = max(max_turn, turn)
-            except (AttributeError, ValueError):
-                continue
+        # Ищем файлы ходов в игровой директории с учетом обоих вариантов именования
+        for file in os.listdir(self.game_dir):
+            # Проверяем оба варианта именования
+            year_match = re.search(r'[Гг]од(\d+)\.svs', file, re.IGNORECASE)
+            alt_match = re.search(r'®¤(\d+)\.svs', file, re.IGNORECASE)
+            
+            if year_match:
+                try:
+                    turn = int(year_match.group(1))
+                    max_turn = max(max_turn, turn)
+                except ValueError:
+                    continue
+            elif alt_match:
+                try:
+                    turn = int(alt_match.group(1))
+                    max_turn = max(max_turn, turn)
+                except ValueError:
+                    continue
         return max_turn
 
     def calculate_cell_size(self):
@@ -575,17 +777,61 @@ class MapVisualizer:
 
     def read_map_dimensions(self):
         try:
-            with open('ANT.DAT', 'r') as file:
-                lines = file.readlines()
-                if len(lines) >= 3:
-                    # Парсим вторую и третью строки для получения размеров
-                    width = int(lines[1].strip())
-                    height = int(lines[2].strip())
-                    return width, height
+            ant_file = self.find_file('ANT.DAT')
+            with open(ant_file, 'rb') as file:
+                content = file.read()
+                # Пробуем разные кодировки
+                for encoding in ['cp1251', 'cp866', 'utf-8']:
+                    try:
+                        text = content.decode(encoding)
+                        lines = text.split('\n')
+                        
+                        # Читаем заголовок и устанавливаем его в окно
+                        title = lines[0].strip('[]').strip()
+                        pygame.display.set_caption(title)
+                        
+                        # Читаем размеры карты
+                        width = int(lines[1].strip())
+                        height = int(lines[2].strip())
+                        
+                        return width, height
+                    except UnicodeDecodeError:
+                        continue
+                
+                raise UnicodeDecodeError("Не удалось декодировать файл ANT.DAT")
+                
         except (FileNotFoundError, ValueError, IndexError) as e:
-            print(f"Ошибка чтения размеров карты: {e}")
-            # Возвращаем значения по умолчанию если файл не найден
+            print(f"Ошибка чтения карты: {e}")
             return 130, 57
+
+    def find_game_directory(self):
+        """Поиск директории с игровыми файлами"""
+        # Проверяем текущую директорию
+        if os.path.exists('ANT.DAT'):
+            return '.'
+            
+        # Ищем в поддиректориях
+        for dir_entry in os.scandir('.'):
+            if dir_entry.is_dir():
+                ant_path = os.path.join(dir_entry.path, 'ANT.DAT')
+                if os.path.exists(ant_path):
+                    return dir_entry.path
+                    
+        return None
+
+    def find_file(self, filename):
+        """Ищет файл независимо от регистра букв в имени"""
+        # Проверяем в игровой директории
+        game_path = os.path.join(self.game_dir, filename)
+        if os.path.exists(game_path):
+            return game_path
+            
+        # Ищем файл в разных регистрах
+        for file in os.listdir(self.game_dir):
+            if file.lower() == filename.lower():
+                return os.path.join(self.game_dir, file)
+                
+        raise FileNotFoundError(f"Файл {filename} не найден")
 
     def draw_grid(self):
         """Отрисовывает сетку игрового поля"""
@@ -650,14 +896,14 @@ class MapVisualizer:
                 # Логируем проверку цвета
                 is_black_pixel = is_black(color)
                 is_white_pixel = is_white(color)
-                print(f"x={x}, y={y}, цвет={color}, ")
-                print(f"    черный={is_black_pixel} (нужно < 30 для всех компонент)")
-                print(f"    белый={is_white_pixel} (нужно > 225 для всех компонент)")
+                # print(f"x={x}, y={y}, цвет={color}, ")
+                # print(f"    черный={is_black_pixel} (нужно < 30 для всех компонент)")
+                # print(f"    белый={is_white_pixel} (нужно > 225 для всех компонент)")
                 
                 if is_black_pixel:
                     black_count += 1
                     if 3 <= black_count <= 10:
-                        print(f"Найден черный паттерн длиной {black_count}")
+                        # print(f"Найден черный паттерн длиной {black_count}")
                         # Отмечаем найденный паттерн зелеными точками
                         for i in range(x, x + black_count):
                             debug_surface.set_at((i, y), (0, 255, 0))
@@ -673,7 +919,7 @@ class MapVisualizer:
                 elif is_white_pixel:
                     white_count += 1
                     if 3 <= white_count <= 10:
-                        print(f"Найден белый паттерн длиной {white_count}")
+                        # print(f"Найден белый паттерн длиной {white_count}")
                         # Отмечаем найденный паттерн зелеными точками
                         for i in range(x, x + white_count):
                             debug_surface.set_at((i, y), (0, 255, 0))
@@ -806,8 +1052,8 @@ class MapVisualizer:
         def find_pattern_in_column(x):
             black_count = white_count = 0
             
-            # Сканируем от центра к верхнему краю (изменено направление)
-            for y in range(50, 0, -1):  # Начинаем с 50 и идем к верхнему краю
+            # Сканируем от центра к верхнему краю
+            for y in range(50, 0, -1):
                 color = tuple(pixel_array[x][y])
                 self.debug_surface.set_at((x, y), (255, 0, 0))
                 self.screen.blit(self.debug_surface, (2, 2))
@@ -819,7 +1065,7 @@ class MapVisualizer:
                     if 3 <= black_count <= 10:
                         for i in range(y, y + black_count):  # Отмечаем паттерн
                             self.debug_surface.set_at((x, i), (0, 255, 0))
-                        border_y = y  # Граница - начало паттерна
+                        border_y = y + black_count  # Граница - конец паттерна
                         for x_line in range(width):
                             self.debug_surface.set_at((x_line, border_y), (144, 238, 144))
                         return border_y, black_count
@@ -830,10 +1076,11 @@ class MapVisualizer:
                     if 3 <= white_count <= 10:
                         for i in range(y, y + white_count):
                             self.debug_surface.set_at((x, i), (0, 255, 0))
-                        border_y = y
+                        border_y = y + white_count  # Граница - конец паттерна
                         for x_line in range(width):
                             self.debug_surface.set_at((x_line, border_y), (144, 238, 144))
                         return border_y, white_count
+                    black_count = 0
                 else:
                     black_count = white_count = 0
             return None, None
@@ -913,6 +1160,151 @@ class MapVisualizer:
             self.cell_height = height / self.map_height
             print(f"Размеры клетки: {self.cell_width:.2f}x{self.cell_height:.2f} пикселей")
             return True
+        return False
+
+    def get_cell_terrain(self, cell_x, cell_y):
+        """Получает тип местности в указанной клетке"""
+        if hasattr(self, 'terrain_map') and self.terrain_map:
+            if 0 <= cell_y < len(self.terrain_map) and 0 <= cell_x < len(self.terrain_map[0]):
+                terrain_code = self.terrain_map[cell_y][cell_x]
+                if terrain_code:
+                    return self.get_terrain_type(terrain_code)
+        return "неизвестно"
+
+    def get_terrain_type(self, code):
+        """Преобразует код местности в текстовое описание"""
+        terrain_types = {
+            'M': "горы",
+            'F': "лес",
+            'W': "вода",
+            'P': "равнина",
+            'S': "болото",
+            'D': "пустыня"
+        }
+        return terrain_types.get(code, "неизвестно")
+
+    def get_terrain_info(self, terrain_type):
+        """Возвращает описание типа местности"""
+        terrain_names = {
+            "равнина": "Равнина",
+            "лес": "Лес",
+            "горы": "Горы",
+            "вода": "Вода",
+            "болото": "Болото",
+            "пустыня": "Пустыня",
+            "неизвестно": "Неизвестно"
+        }
+        return terrain_names.get(terrain_type, terrain_type)
+    
+    def get_cell_buildings(self, cell_x, cell_y):
+        """Получает список строений в указанной клетке"""
+        buildings = []
+        for obj in self.current_turn_objects:
+            if isinstance(obj, tuple) and len(obj) >= 3:
+                obj_type, x, y = obj[:3]
+                # Проверяем, является ли объект строением и находится ли в указанной клетке
+                if (x-1, y-1) == (cell_x, cell_y) and obj_type in 'КГЗПБ':
+                    building_name = self.game_objects.get(obj_type, [obj_type])[0]
+                    buildings.append(building_name)
+        return buildings
+    
+    def get_cell_armies(self, cell_x, cell_y):
+        """Получает список армий в указанной клетке"""
+        armies = []
+        for obj in self.current_turn_objects:
+            if isinstance(obj, tuple) and len(obj) >= 3:
+                obj_type, x, y = obj[:3]
+                # Проверяем, является ли объект армией и находится ли в указанной клетке
+                if (x-1, y-1) == (cell_x, cell_y) and obj_type.lower() in 'гвэопрмзд':
+                    army_name = self.game_objects.get(obj_type, [obj_type])[0]
+                    armies.append(army_name)
+        return armies
+    
+    def get_building_owner(self, cell_x, cell_y, building_name):
+        """Получает владельца строения"""
+        # Ищем владельца среди игроков
+        for player in self.current_players:
+            for obj in player.get('objects', []):
+                if isinstance(obj, tuple) and len(obj) >= 3:
+                    obj_type, x, y = obj[:3]
+                    if (x-1, y-1) == (cell_x, cell_y) and self.game_objects.get(obj_type, [obj_type])[0] == building_name:
+                        return player.get('name')
+        return None
+    
+    def get_army_owner(self, cell_x, cell_y, army_name):
+        """Получает владельца армии"""
+        # Ищем владельца среди игроков
+        for player in self.current_players:
+            for obj in player.get('objects', []):
+                if isinstance(obj, tuple) and len(obj) >= 3:
+                    obj_type, x, y = obj[:3]
+                    if (x-1, y-1) == (cell_x, cell_y) and self.game_objects.get(obj_type, [obj_type])[0] == army_name:
+                        return player.get('name')
+        return None
+
+    def load_initial_players(self):
+        """Загрузка начальных данных об игроках из нулевого хода"""
+        try:
+            # Проверяем оба варианта именования нулевого хода
+            turn0_file = None
+            for name in ['Год0.svs', 'год0.svs', '®¤0.svs']:
+                full_path = os.path.join(self.game_dir, name)
+                if os.path.exists(full_path):
+                    turn0_file = full_path
+                    break
+
+            if turn0_file:
+                with open(turn0_file, 'rb') as f:
+                    content = f.read()
+                    # Пробуем разные кодировки
+                    for encoding in ['cp1251', 'cp866', 'utf-8']:
+                        try:
+                            text = content.decode(encoding)
+                            lines = text.split('\n')
+                            
+                            current_player = None
+                            for line in lines:
+                                line = line.strip()
+                                if not line:
+                                    continue
+                                    
+                                if line.startswith('Player'):
+                                    if current_player:
+                                        self.current_players.append(current_player)
+                                    current_player = {'name': '', 'color': 0, 'objects': []}
+                                elif not line[0].isdigit() and current_player is not None:
+                                    # Строка с именем игрока
+                                    current_player['name'] = line
+                                elif len(line.split()) >= 3 and current_player is not None:
+                                    # Строка с данными игрока (координаты, казна, цвет)
+                                    parts = line.split()
+                                    try:
+                                        current_player['color'] = int(parts[2])
+                                    except (ValueError, IndexError):
+                                        continue
+                            
+                            # Добавляем последнего игрока
+                            if current_player:
+                                self.current_players.append(current_player)
+                            break
+                        except UnicodeDecodeError:
+                            continue
+        except Exception as e:
+            print(f"Ошибка загрузки данных игроков: {e}")
+
+    def handle_click(self, pos):
+        """Обработка клика мыши"""
+        # ... существующий код ...
+        
+        # Проверяем клик по цветным прямоугольникам игроков
+        for rect, player in player_rects:
+            if rect.collidepoint(pos):
+                if self.selected_player == player:
+                    self.selected_player = None  # Повторный клик снимает выделение
+                else:
+                    self.selected_player = player
+                return True
+        
         return False
 
 if __name__ == '__main__':
