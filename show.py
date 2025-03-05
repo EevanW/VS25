@@ -218,21 +218,42 @@ class MapVisualizer:
                             
                             current_player = None
                             for line in lines:
+                                input_string = line.strip()
+                                print(f"New line: {input_string}")
                                 if line.startswith('Player'):
+                                    print(f"It's: {'Player!'}")
                                     continue
                                 elif len(line.split()) >= 3:
                                     parts = line.split()
                                     if len(parts) >= 3 and parts[0].isdigit():
                                         # Строка с координатами и цветом игрока
+                                        print(f"Digit Line: {parts}")
                                         try:
                                             color = int(parts[2])
                                             if current_player:
                                                 self.player_colors[current_player] = color
+                                                print(f"Цвет игрока: {color}")
                                         except ValueError:
                                             continue
                                 else:
                                     # Строка с именем игрока
-                                    current_player = line.strip()
+                                    input_string = line.strip()
+                                    # Регулярное выражение для извлечения данных
+                                    pattern = r'^(.*?)\s*\((.*?)\)\s*(.*)$'
+                                    print(f"input_string: {input_string}")
+                                    # Поиск совпадений
+                                    match = re.match(pattern, input_string)
+                                    
+                                    if match:
+                                        current_player = match.group(1).strip()
+                                        player_name = match.group(2).strip()
+                                        country_name = match.group(3).strip()
+                                        
+                                        print(f"Имя персонажа: {current_player}")
+                                        print(f"Имя игрока: {player_name}")
+                                        print(f"Название страны: {country_name}")
+                                    else:
+                                        print("Не удалось извлечь данные из строки.")
                         except UnicodeDecodeError:
                             continue
         except Exception as e:
@@ -297,11 +318,11 @@ class MapVisualizer:
                             # Парсим координаты объекта
                             parts = [part.strip() for part in line.split() if part.strip()]
                             if len(parts) >= 3:
-                            obj_type = parts[0]
+                                obj_type = parts[0]
                                 if obj_type in self.game_objects:
                                     try:
-                            x = int(parts[1])
-                            y = int(parts[2])
+                                        x = int(parts[1])
+                                        y = int(parts[2])
                                         state = int(parts[3].rstrip(',')) if len(parts) > 3 else 0
                                         obj = (obj_type, x, y, state)
                                         objects.append(obj)
@@ -319,7 +340,7 @@ class MapVisualizer:
                         
                         # Сохраняем информацию об игроках
                         self.current_players = players_info
-        return objects
+                        return objects
                     except UnicodeDecodeError:
                         continue
                         
@@ -764,9 +785,9 @@ class MapVisualizer:
             elif alt_match:
                 try:
                     turn = int(alt_match.group(1))
-                max_turn = max(max_turn, turn)
+                    max_turn = max(max_turn, turn)
                 except ValueError:
-                continue
+                    continue
         return max_turn
 
     def calculate_cell_size(self):
