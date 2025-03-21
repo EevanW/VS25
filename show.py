@@ -6,150 +6,34 @@ import codecs
 import locale
 import sys
 
+
+
 class MapVisualizer:
     def __init__(self):
         pygame.init()
-
         # Определение системной кодировки
-        self.system_encoding = locale.getpreferredencoding()
-        if sys.platform == 'win32':
-            self.system_encoding = 'cp1251'
-
+        self.check_system_encoding()
         # Находим рабочую директорию с файлами
-        self.game_dir = self.find_game_directory()
-        if not self.game_dir:
-            raise FileNotFoundError("Не найдена директория с игровыми файлами")
-
+        self.find_game_directory()
         # Читаем размеры карты из ANT.DAT
         self.map_width, self.map_height = self.read_map_dimensions()
-
         # Читаем игровые константы
         self.read_game_constants()
-
         # Загружаем фоновое изображение с учетом регистра
-        map_file = self.find_file('MAP.BMP')
-        self.original_background = pygame.image.load(map_file)
-        self.aspect_ratio = self.original_background.get_width() / self.original_background.get_height()
-        
+        self.load_background_map()
         # Создаем одну поверхность для всего содержимого
-        self.canvas = self.original_background.copy()
-        self.canvas_width = self.original_background.get_width()
-        self.canvas_height = self.original_background.get_height()
-        
-        # Создаем начальную масштабированную канву
-        self.scaled_canvas = self.canvas.copy()
-        
-        # Простое определение границ игрового поля
-        width, height = self.original_background.get_width(), self.original_background.get_height()
-        self.field_bounds = (0, 0, width, height)
-        
-        # Вычисляем размеры клетки отдельно по горизонтали и вертикали
-        self.cell_width = width / self.map_width
-        self.cell_height = height / self.map_height
-        
-        # Для элементов интерфейса используем высоту клетки
-        self.cell_size = self.cell_height  # Изменено с min() на высоту клетки
-        
-        # Устанавливаем размер шрифта и высоту панели
-        self.font = pygame.font.Font(None, int(self.cell_height * 0.7))  # 70% от высоты клетки
-        self.panel_height = int(self.cell_height * 1.5)
-        
-        # Добавляем параметры для панели игроков
-        self.player_panel_height = int(self.cell_height * 2)  # Высота панели игроков
-        self.color_rect_width = 30  # Ширина цветного прямоугольника для каждого игрока
-        self.color_rect_height = 20  # Высота цветного прямоугольника
-        self.color_spacing = 5  # Расстояние между цветными прямоугольниками
-        
-        # Обновляем размеры окна с учетом обеих панелей
-        self.screen_width = self.canvas_width
-        self.screen_height = self.canvas_height + self.panel_height + self.player_panel_height
-        
-        # Позиции панелей
-        self.panel_y = self.canvas_height
-        self.player_panel_y = self.panel_y + self.panel_height
-        
-        # Инициализируем списки для хранения данных игроков
-        self.current_players = []
-        self.selected_player = None
-
-        self.player_rects = []
-        
-        # Создаем окно с новыми размерами
-        self.screen = pygame.display.set_mode((self.screen_width, self.screen_height), pygame.RESIZABLE)
-        
-        # Словарь для игровых элементов
-        self.game_objects = {
-            'г': ('Гном', (139, 69, 19)),
-            'в': ('Варвар', (165, 42, 42)),
-            'э': ('Эльф', (34, 139, 34)),
-            'о': ('Орк', (107, 142, 35)),
-            'п': ('Пехота', (169, 169, 169)),
-            'р': ('Рыцарь', (192, 192, 192)),
-            'м': ('Маг', (138, 43, 226)),
-            'з': ('Зомби', (85, 107, 47)),
-            'д': ('Дракон', (178, 34, 34)),
-            'ф': ('Корабль', (0, 0, 139)),
-            'К': ('Крепость', (139, 0, 0)),
-            'Г': ('Город', (128, 128, 128)),
-            'З': ('Замок', (47, 79, 79)),
-            'П': ('Поместье', (160, 82, 45)),
-            'Б': ('Башня', (112, 128, 144)),
-            'C': ('Медь', (184, 115, 51)),
-            'S': ('Серебро', (192, 192, 192)),
-            'G': ('Золото', (255, 215, 0)),
-            'M': ('Мифрил', (173, 216, 230))
-        }
-
-        self.current_turn = 0
-        self.max_turn = self.find_max_turn()
-        
+        self.prepare_canvas()
         # Загружаем данные игроков из нулевого хода
         print("Начинаем загрузку данных игроков...")
-        self.load_initial_players()
+        self.load_turn_data(0)
         print(f"Загружено игроков: {len(self.current_players)}")
+        # Словарь для игровых элементов
+        self.prepare_game_objects()
+        
+
         
         self.cell_size = self.calculate_cell_size()
-        self.font = pygame.font.Font(None, int(self.cell_height * 0.7))  # 70% от высоты клетки
-
-        # Загружаем изображения пиктограмм с учетом регистра
-        osnova_file = self.find_file('OSNOVA.BMP')
-        rudnici_file = self.find_file('RUDNICI.BMP')
-        self.army_icons = self.load_icons(osnova_file, 16)  # 16 иконок армий/строений
-        self.mine_icons = self.load_icons(rudnici_file, 4)  # 4 иконки рудников
-        
-        # Словарь соответствия символов и индексов иконок
-        self.icon_indices = {
-            'л': 0,  # Личное войско
-            'г': 1,  # Гном
-            'в': 2,  # Варвар
-            'э': 3,  # Эльф
-            'о': 4,  # Орк
-            'п': 5,  # Пехота
-            'р': 6,  # Рыцарь
-            'м': 7,  # Маг
-            'з': 8,  # Зомби
-            'д': 9,  # Дракон
-            'ф': 10, # Корабль
-            'К': 11, # Крепость
-            'Г': 12, # Город
-            'З': 13, # Замок
-            'П': 14, # Поместье
-            'Б': 15, # Башня
-            'C': 0,  # Медь (индекс в mine_icons)
-            'S': 1,  # Серебро
-            'G': 2,  # Золото
-            'M': 3   # Мифрил
-        }
-
-        # Поиск границ игрового поля
-        self.left_border, self.cell_size = self.find_left_border()
-        if self.left_border is None:
-            self.left_border = 0
-            # Используем старый способ вычисления размера клетки
-            width, height = self.original_background.get_width(), self.original_background.get_height()
-            self.cell_width = width / self.map_width
-            self.cell_height = height / self.map_height
-            self.cell_size = min(self.cell_width, self.cell_height)
+        self.prepare_icons()
 
         # Добавляем атрибут для хранения отладочной поверхности
         self.debug_surface = None
@@ -198,69 +82,6 @@ class MapVisualizer:
             self.map_width = 130  # Значения по умолчанию
             self.map_height = 57
 
-        # Чтение цветов игроков из нулевого хода
-        try:
-            # Проверяем оба варианта именования нулевого хода
-            turn0_file = None
-            for name in ['Год0.svs', 'год0.svs', '®¤0.svs']:
-                full_path = os.path.join(self.game_dir, name)
-                if os.path.exists(full_path):
-                    turn0_file = full_path
-                    break
-
-            if turn0_file:
-                with open(turn0_file, 'rb') as f:
-                    content = f.read()
-                    # Пробуем разные кодировки
-                    for encoding in ['cp1251', 'cp866', 'utf-8']:
-                        try:
-                            text = content.decode(encoding)
-                            lines = text.split('\n')
-                            self.player_colors = {}
-                            
-                            current_player = None
-                            for line in lines:
-                                input_string = line.strip()
-                                print(f"New line: {input_string}")
-                                if line.startswith('Player'):
-                                    print(f"It's: {'Player!'}")
-                                    continue
-                                elif len(line.split()) >= 3:
-                                    parts = line.split()
-                                    if len(parts) >= 3 and parts[0].isdigit():
-                                        # Строка с координатами и цветом игрока
-                                        print(f"Digit Line: {parts}")
-                                        try:
-                                            color = int(parts[2])
-                                            if current_player:
-                                                self.player_colors[current_player] = color
-                                                print(f"Цвет игрока: {color}")
-                                        except ValueError:
-                                            continue
-                                else:
-                                    # Строка с именем игрока
-                                    input_string = line.strip()
-                                    # Регулярное выражение для извлечения данных
-                                    pattern = r'^(.*?)\s*\((.*?)\)\s*(.*)$'
-                                    print(f"input_string: {input_string}")
-                                    # Поиск совпадений
-                                    match = re.match(pattern, input_string)
-                                    
-                                    if match:
-                                        current_player = match.group(1).strip()
-                                        player_name = match.group(2).strip()
-                                        country_name = match.group(3).strip()
-                                        
-                                        print(f"Имя персонажа: {current_player}")
-                                        print(f"Имя игрока: {player_name}")
-                                        print(f"Название страны: {country_name}")
-                                    else:
-                                        print("Не удалось извлечь данные из строки.")
-                        except UnicodeDecodeError:
-                            continue
-        except Exception as e:
-            print(f"Ошибка чтения Год0.svs: {e}")
-            self.player_colors = {}
 
     def load_turn_data(self, turn):
         """Загрузка данных хода"""
@@ -272,7 +93,7 @@ class MapVisualizer:
             possible_names = [
                 f'Год{turn}.svs',
                 f'год{turn}.svs',
-                f'®¤{turn}.svs'
+                f'®¤{turn}.svs'
             ]
             
             for name in possible_names:
@@ -287,62 +108,84 @@ class MapVisualizer:
             with open(turn_file, 'rb') as file:
                 content = file.read()
                 # Пробуем разные кодировки
-                for encoding in ['cp1251', 'cp866', 'utf-8']:
+                for encoding in ['cp1251']:  #'cp1251', 'cp866', 'utf-8'
                     try:
                         text = content.decode(encoding)
                         lines = text.split('\n')
                         
                         objects = []
                         players_info = []  # Список для хранения информации об игроках
-                        current_player = None
-                        read_player = False
+                        current_player = {'name': '', 'contact': '', 'country': '', 'color': 0, 'objects': []}
+                        current_line_shift = -2
                         
                         for line in lines:
+                            current_line_shift = current_line_shift + 1
                             line = line.strip().rstrip(',').strip()
                             
+                            if not line:
+                                continue
+                            if line.startswith('END'):
+                               break
+                            if current_line_shift == -1:
+                                # Заголовочная строка
+                                # Обработать словарь
+                                        continue
                             if line.startswith('Player'):
-                                current_player = {'objects': []}
+                                print(f"Найден заголоок Player")
+                                current_line_shift = 0
                                 if current_player:
                                     players_info.append(current_player)
-                                    read_player = True
+                                    current_player = {'name': '', 'contact': '', 'country': '', 'color': 0, 'objects': []}
+                                    print(f"Найден новый игрок, обнуляем предыдущего")
+                                    current_line_shift = -1
                                 continue
-                            
-                            if not line or line.startswith('END'):
-                                continue
-                            
-                            # Проверяем, является ли строка информацией об игроке
-                            # and len(line.split()) < 3
-                            if current_player is not None and read_player:
-                                # Парсим имя игрока и название страны
-                                match = re.match(r'(.*?)\s*\((.*?)\)', line)
-                                if match:
-                                    current_player['name'] = match.group(1).strip()
-                                    current_player['country'] = match.group(2).strip()
-                                read_player = False
-                                continue
-                            
-                            # Парсим координаты объекта
-                            parts = [part.strip() for part in line.split() if part.strip()]
-                            if len(parts) >= 3:
-                                obj_type = parts[0]
-                                if obj_type in self.game_objects:
-                                    try:
-                                        x = int(parts[1])
-                                        y = int(parts[2])
-                                        state = int(parts[3].rstrip(',')) if len(parts) > 3 else 0
-                                        obj = (obj_type, x, y, state)
-                                        objects.append(obj)
-                                        if current_player:
-                                            current_player['objects'].append(obj)
-                                    except (ValueError, IndexError) as e:
-                                        print(f"Ошибка парсинга строки '{line}': {e}")
-                                else:
-                                    # Пропускаем неизвестные типы объектов без вывода ошибки
+                            elif current_line_shift == 0:
+                                # Разделяем строку на части
+                                parts = line.split(' (')
+                                if len(parts) == 2:
+                                    player = parts[0].strip()  # Всё до скобки
+                                    remaining = parts[1].split(') ', 1)  # Разделяем по закрывающей скобке
+                                    if len(remaining) == 2:
+                                        player_name = remaining[0].strip()  # Текст внутри скобок
+                                        player_country = remaining[1].strip()  # Всё после скобки
+                                        current_player['name'] = player
+                                        current_player['contact'] = player_name
+                                        current_player['country'] = player_country
+                                        print(f"Найдена строка с именем игрока: {player}")
+                                        continue
+                            elif current_line_shift == 1:
+                                # Строка с данными игрока (координаты, казна, цвет)
+                                parts = line.split()
+                                try:
+                                    current_player['color'] = int(parts[2])
+                                    print(f"НАйден цвет: {current_player['color']}")
                                     continue
+                                except (ValueError, IndexError):
+                                    continue
+                            else:
+                                # Парсим координаты объекта
+                                parts = [part.strip() for part in line.split() if part.strip()]
+                                if len(parts) >= 3:
+                                    obj_type = parts[0]
+                                    if obj_type in self.game_objects:
+                                        try:
+                                            x = int(parts[1])
+                                            y = int(parts[2])
+                                            state = int(parts[3].rstrip(',')) if len(parts) > 3 else 0
+                                            obj = (obj_type, x, y, state)
+                                            objects.append(obj)
+                                            print(f"Найдены объекты {objects}")
+                                            if current_player:
+                                                current_player['objects'].append(obj)
+                                        except (ValueError, IndexError) as e:
+                                            print(f"Ошибка парсинга строки '{line}': {e}")
+                                    else:
+                                        # Пропускаем неизвестные типы объектов без вывода ошибки
+                                        continue
                         
-                        # Добавляем последнего игрока
-                        if current_player:
-                            players_info.append(current_player)
+                        # # Добавляем последнего игрока
+                        # if current_player:
+                        #     players_info.append(current_player)
                         
                         # Сохраняем информацию об игроках
                         self.current_players = players_info
@@ -605,7 +448,6 @@ class MapVisualizer:
             r = (color >> 16) & 255
             g = (color >> 8) & 255
             b = color & 255
-            
             rect = pygame.Rect(x, self.player_panel_y + 5, 
                              self.color_rect_width, self.color_rect_height)
             pygame.draw.rect(self.screen, (r, g, b), rect)
@@ -740,21 +582,30 @@ class MapVisualizer:
 
     def run(self):
         running = True
+        change_turn = True
+        redraw = True
         while running:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
+                elif event.type == pygame.MOUSEMOTION:
+                    redraw = True
                 elif event.type == pygame.VIDEORESIZE:
+                    redraw = True
                     # Запоминаем текущие размеры окна
                     self.handle_resize(event.w, event.h)
                 elif event.type == pygame.MOUSEBUTTONDOWN:
+                    redraw = True
                     mouse_pos = pygame.mouse.get_pos()
                     button_rects = self.draw_interface()
-                    
                     # Проверяем клик по кнопкам навигации
                     if button_rects[0].collidepoint(mouse_pos):  # Предыдущий ход
+                        change_turn = True
+                        redraw = True
                         self.current_turn = max(0, self.current_turn - 1)
                     elif button_rects[1].collidepoint(mouse_pos):  # Следующий ход
+                        change_turn = True
+                        redraw = True
                         self.current_turn = min(self.max_turn, self.current_turn + 1)
                     
                     # Проверяем клик по прямоугольникам игроков
@@ -764,12 +615,15 @@ class MapVisualizer:
                             break
 
             # Отрисовка всего интерфейса
-            self.screen.fill((255, 255, 255))
-            self.draw_canvas()
-            turn_objects = self.load_turn_data(self.current_turn)
-            self.draw_game_objects(turn_objects)
-            self.draw_interface()
-            
+            if change_turn:
+                turn_objects = self.load_turn_data(self.current_turn)
+            if redraw:
+                self.screen.fill((255, 255, 255))
+                self.draw_canvas()
+                self.draw_game_objects(turn_objects)
+                self.draw_interface()
+            change_turn = False
+            redraw = False
             pygame.display.flip()
         
         pygame.quit()
@@ -835,16 +689,17 @@ class MapVisualizer:
         """Поиск директории с игровыми файлами"""
         # Проверяем текущую директорию
         if os.path.exists('ANT.DAT'):
-            return '.'
+            self.game_dir = '.'
+            return self.game_dir
             
         # Ищем в поддиректориях
         for dir_entry in os.scandir('.'):
             if dir_entry.is_dir():
                 ant_path = os.path.join(dir_entry.path, 'ANT.DAT')
                 if os.path.exists(ant_path):
-                    return dir_entry.path
-                    
-        return None
+                    self.game_dir = dir_entry.path
+                    return self.game_dir
+        raise FileNotFoundError("Не найдена директория с игровыми файлами")
 
     def find_file(self, filename):
         """Ищет файл независимо от регистра букв в имени"""
@@ -869,18 +724,22 @@ class MapVisualizer:
         
         # Вертикальные линии
         for x in range(self.map_width + 1):
+            # Определяем цвет линии
+            color_index = [170, 140, 110, 80, 50][x % 5]
             x_pos = left + x * self.cell_width
             pygame.draw.line(self.debug_surface, 
-                           (255, 0, 0),  # Красный цвет
+                           (color_index, color_index, color_index),  # Серый цвет
                            (x_pos, top), 
                            (x_pos, top + height),
                            1)  # Толщина линии
         
         # Горизонтальные линии
         for y in range(self.map_height + 1):
+            # Определяем цвет линии
+            color_index = [170, 140, 110, 80, 50][y % 5]
             y_pos = top + y * self.cell_height
             pygame.draw.line(self.debug_surface,
-                           (255, 0, 0),  # Красный цвет
+                           (color_index, color_index, color_index),  # Серый цвет
                            (left, y_pos),
                            (left + width, y_pos),
                            1)  # Толщина линии
@@ -1269,56 +1128,6 @@ class MapVisualizer:
                         return player.get('name')
         return None
 
-    def load_initial_players(self):
-        """Загрузка начальных данных об игроках из нулевого хода"""
-        try:
-            # Проверяем оба варианта именования нулевого хода
-            turn0_file = None
-            for name in ['Год0.svs', 'год0.svs', '®¤0.svs']:
-                full_path = os.path.join(self.game_dir, name)
-                if os.path.exists(full_path):
-                    turn0_file = full_path
-                    break
-
-            if turn0_file:
-                with open(turn0_file, 'rb') as f:
-                    content = f.read()
-                    # Пробуем разные кодировки
-                    for encoding in ['cp1251', 'cp866', 'utf-8']:
-                        try:
-                            text = content.decode(encoding)
-                            lines = text.split('\n')
-                            
-                            current_player = None
-                            for line in lines:
-                                line = line.strip()
-                                if not line:
-                                    continue
-                                    
-                                if line.startswith('Player'):
-                                    if current_player:
-                                        self.current_players.append(current_player)
-                                    current_player = {'name': '', 'color': 0, 'objects': []}
-                                elif not line[0].isdigit() and current_player is not None:
-                                    # Строка с именем игрока
-                                    current_player['name'] = line
-                                elif len(line.split()) >= 3 and current_player is not None:
-                                    # Строка с данными игрока (координаты, казна, цвет)
-                                    parts = line.split()
-                                    try:
-                                        current_player['color'] = int(parts[2])
-                                    except (ValueError, IndexError):
-                                        continue
-                            
-                            # Добавляем последнего игрока
-                            if current_player:
-                                self.current_players.append(current_player)
-                            break
-                        except UnicodeDecodeError:
-                            continue
-        except Exception as e:
-            print(f"Ошибка загрузки данных игроков: {e}")
-
     def handle_click(self, pos):
         """Обработка клика мыши"""
         # ... существующий код ...
@@ -1333,6 +1142,120 @@ class MapVisualizer:
                 return True
         
         return False
+
+    def check_system_encoding(self):
+        self.system_encoding = locale.getpreferredencoding()
+        if sys.platform == 'win32':
+            self.system_encoding = 'cp1251'
+
+    def load_background_map(self):
+        map_file = self.find_file('MAP.BMP')
+        self.original_background = pygame.image.load(map_file)
+        self.aspect_ratio = self.original_background.get_width() / self.original_background.get_height()
+    
+    def prepare_canvas(self):
+        # Создаем одну поверхность для всего содержимого
+        self.canvas = self.original_background.copy()
+        self.canvas_width = self.original_background.get_width()
+        self.canvas_height = self.original_background.get_height()
+        # Создаем начальную масштабированную канву
+        self.scaled_canvas = self.canvas.copy()
+        
+        # Простое определение границ игрового поля
+        width, height = self.original_background.get_width(), self.original_background.get_height()
+        self.field_bounds = (0, 0, width, height)
+        
+        # Вычисляем размеры клетки отдельно по горизонтали и вертикали    
+        self.cell_height = height / self.map_height
+        
+        # Для элементов интерфейса используем высоту клетки
+        self.cell_size = self.cell_height  # Изменено с min() на высоту клетки
+        
+        # Устанавливаем размер шрифта и высоту панели
+        self.font = pygame.font.Font(None, int(self.cell_height * 0.7))  # 70% от высоты клетки
+        self.panel_height = int(self.cell_height * 1.5)
+        
+        # Добавляем параметры для панели игроков
+        self.player_panel_height = int(self.cell_height * 2)  # Высота панели игроков
+        self.color_rect_width = 30  # Ширина цветного прямоугольника для каждого игрока
+        self.color_rect_height = 20  # Высота цветного прямоугольника
+        self.color_spacing = 5  # Расстояние между цветными прямоугольниками
+        
+        # Обновляем размеры окна с учетом обеих панелей
+        self.screen_width = self.canvas_width
+        self.screen_height = self.canvas_height + self.panel_height + self.player_panel_height
+        
+        # Позиции панелей
+        self.panel_y = self.canvas_height
+        self.player_panel_y = self.panel_y + self.panel_height
+        
+        # Инициализируем списки для хранения данных игроков
+        self.current_players = []
+        self.selected_player = None
+
+        self.player_rects = []
+        
+        # Создаем окно с новыми размерами
+        self.screen = pygame.display.set_mode((self.screen_width, self.screen_height), pygame.RESIZABLE)
+
+    def prepare_game_objects(self):
+        self.game_objects = {
+            'г': ('Гном', (139, 69, 19)),
+            'в': ('Варвар', (165, 42, 42)),
+            'э': ('Эльф', (34, 139, 34)),
+            'о': ('Орк', (107, 142, 35)),
+            'п': ('Пехота', (169, 169, 169)),
+            'р': ('Рыцарь', (192, 192, 192)),
+            'м': ('Маг', (138, 43, 226)),
+            'з': ('Зомби', (85, 107, 47)),
+            'д': ('Дракон', (178, 34, 34)),
+            'ф': ('Корабль', (0, 0, 139)),
+            'К': ('Крепость', (139, 0, 0)),
+            'Г': ('Город', (128, 128, 128)),
+            'З': ('Замок', (47, 79, 79)),
+            'П': ('Поместье', (160, 82, 45)),
+            'Б': ('Башня', (112, 128, 144)),
+            'C': ('Медь', (184, 115, 51)),
+            'S': ('Серебро', (192, 192, 192)),
+            'G': ('Золото', (255, 215, 0)),
+            'M': ('Мифрил', (173, 216, 230))
+        }
+
+        self.current_turn = 0
+        self.max_turn = self.find_max_turn()
+
+    def prepare_icons(self):
+        self.font = pygame.font.Font(None, int(self.cell_height * 0.7))  # 70% от высоты клетки
+
+        # Загружаем изображения пиктограмм с учетом регистра
+        osnova_file = self.find_file('OSNOVA.BMP')
+        rudnici_file = self.find_file('RUDNICI.BMP')
+        self.army_icons = self.load_icons(osnova_file, 16)  # 16 иконок армий/строений
+        self.mine_icons = self.load_icons(rudnici_file, 4)  # 4 иконки рудников
+        
+        # Словарь соответствия символов и индексов иконок
+        self.icon_indices = {
+            'л': 0,  # Личное войско
+            'г': 1,  # Гном
+            'в': 2,  # Варвар
+            'э': 3,  # Эльф
+            'о': 4,  # Орк
+            'п': 5,  # Пехота
+            'р': 6,  # Рыцарь
+            'м': 7,  # Маг
+            'з': 8,  # Зомби
+            'д': 9,  # Дракон
+            'ф': 10, # Корабль
+            'К': 11, # Крепость
+            'Г': 12, # Город
+            'З': 13, # Замок
+            'П': 14, # Поместье
+            'Б': 15, # Башня
+            'C': 0,  # Медь (индекс в mine_icons)
+            'S': 1,  # Серебро
+            'G': 2,  # Золото
+            'M': 3   # Мифрил
+        }
 
 if __name__ == '__main__':
     visualizer = MapVisualizer()
