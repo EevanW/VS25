@@ -71,6 +71,8 @@ class MapVisualizer:
         # Инициализируем списки для хранения данных игроков
         self.current_players = []
         self.selected_player = None
+
+        self.player_rects = []
         
         # Создаем окно с новыми размерами
         self.screen = pygame.display.set_mode((self.screen_width, self.screen_height), pygame.RESIZABLE)
@@ -293,26 +295,30 @@ class MapVisualizer:
                         objects = []
                         players_info = []  # Список для хранения информации об игроках
                         current_player = None
+                        read_player = False
                         
                         for line in lines:
                             line = line.strip().rstrip(',').strip()
                             
                             if line.startswith('Player'):
+                                current_player = {'objects': []}
                                 if current_player:
                                     players_info.append(current_player)
-                                current_player = {'objects': []}
+                                    read_player = True
                                 continue
                             
                             if not line or line.startswith('END'):
                                 continue
                             
                             # Проверяем, является ли строка информацией об игроке
-                            if current_player is not None and len(line.split()) < 3:
+                            # and len(line.split()) < 3
+                            if current_player is not None and read_player:
                                 # Парсим имя игрока и название страны
                                 match = re.match(r'(.*?)\s*\((.*?)\)', line)
                                 if match:
                                     current_player['name'] = match.group(1).strip()
                                     current_player['country'] = match.group(2).strip()
+                                read_player = False
                                 continue
                             
                             # Парсим координаты объекта
@@ -591,7 +597,7 @@ class MapVisualizer:
         
         # Отрисовка цветных прямоугольников игроков
         x = 10
-        player_rects = []
+        # player_rects = []
         
         for player in self.current_players:
             color = player.get('color', 0)
@@ -605,7 +611,7 @@ class MapVisualizer:
             pygame.draw.rect(self.screen, (r, g, b), rect)
             pygame.draw.rect(self.screen, (0, 0, 0), rect, 1)  # Рамка
             
-            player_rects.append((rect, player))
+            self.player_rects.append((rect, player))
             x += self.color_rect_width + self.color_spacing
         
         # Отображение информации о выбранном игроке
@@ -616,7 +622,7 @@ class MapVisualizer:
             self.screen.blit(name_surface, (10, info_y))
         
         # Возвращаем все интерактивные элементы
-        return [prev_button, next_button] + [rect for rect, _ in player_rects]
+        return [prev_button, next_button] + [rect for rect, _ in self.player_rects]
 
     def handle_resize(self, width, height):
         """Обработка изменения размера окна"""
@@ -1224,7 +1230,7 @@ class MapVisualizer:
             if isinstance(obj, tuple) and len(obj) >= 3:
                 obj_type, x, y = obj[:3]
                 # Проверяем, является ли объект строением и находится ли в указанной клетке
-                if (x-1, y-1) == (cell_x, cell_y) and obj_type in 'КГЗПБ':
+                if (x-1, y-1) == (cell_x, cell_y) and obj_type in 'КГЗПБCSGM':
                     building_name = self.game_objects.get(obj_type, [obj_type])[0]
                     buildings.append(building_name)
         return buildings
@@ -1236,7 +1242,7 @@ class MapVisualizer:
             if isinstance(obj, tuple) and len(obj) >= 3:
                 obj_type, x, y = obj[:3]
                 # Проверяем, является ли объект армией и находится ли в указанной клетке
-                if (x-1, y-1) == (cell_x, cell_y) and obj_type.lower() in 'гвэопрмзд':
+                if (x-1, y-1) == (cell_x, cell_y) and obj_type in 'гвэопрмзд':
                     army_name = self.game_objects.get(obj_type, [obj_type])[0]
                     armies.append(army_name)
         return armies
@@ -1318,7 +1324,7 @@ class MapVisualizer:
         # ... существующий код ...
         
         # Проверяем клик по цветным прямоугольникам игроков
-        for rect, player in player_rects:
+        for rect, player in self.player_rects:
             if rect.collidepoint(pos):
                 if self.selected_player == player:
                     self.selected_player = None  # Повторный клик снимает выделение
