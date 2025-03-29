@@ -6,7 +6,9 @@ import codecs
 import locale
 import sys
 
-
+class Turn:
+    def __init__(self):
+        self
 
 class MapVisualizer:
     def __init__(self):
@@ -131,12 +133,11 @@ class MapVisualizer:
                                 # Обработать словарь
                                         continue
                             if line.startswith('Player'):
-                                print(f"Найден заголоок Player")
+                                print(f"Найден заголоок Player ---------------------------------------------------")
                                 current_line_shift = 0
                                 if current_player:
                                     players_info.append(current_player)
                                     current_player = {'name': '', 'contact': '', 'country': '', 'color': 0, 'objects': []}
-                                    print(f"Найден новый игрок, обнуляем предыдущего")
                                     current_line_shift = -1
                                 continue
                             elif current_line_shift == 0:
@@ -158,7 +159,7 @@ class MapVisualizer:
                                 parts = line.split()
                                 try:
                                     current_player['color'] = int(parts[2])
-                                    print(f"НАйден цвет: {current_player['color']}")
+                                    print(f"Найден цвет: {current_player['color']}")
                                     continue
                                 except (ValueError, IndexError):
                                     continue
@@ -260,7 +261,7 @@ class MapVisualizer:
                 icon_size = int(min(cell_width, cell_height) * scale_x)  # Полный размер клетки для строений
             else:
                 icon_size = int(min(cell_width, cell_height) * scale_x * 0.8)  # 80% размера для армий
-            
+
             # Получаем цвет игрока
             # Преобразуем число
             r = (color) & 255
@@ -465,7 +466,8 @@ class MapVisualizer:
         if self.selected_player:
             info_y = self.player_panel_y + self.color_rect_height + 10
             name = self.selected_player.get('name', '')
-            name_surface = self.font.render(f"Игрок: {name}", True, (0, 0, 0))
+            country = self.selected_player.get('country', '')
+            name_surface = self.font.render(f"Игрок: {name}    Страна: {country}", True, (0, 0, 0))
             self.screen.blit(name_surface, (10, info_y))
         
         # Возвращаем все интерактивные элементы
@@ -632,7 +634,22 @@ class MapVisualizer:
             pygame.display.flip()
         
         pygame.quit()
-
+    
+    def handle_click(self, pos):
+        """Обработка клика мыши"""
+        # ... существующий код ...
+        
+        # Проверяем клик по цветным прямоугольникам игроков
+        for rect, player in self.player_rects:
+            if rect.collidepoint(pos):
+                if self.selected_player == player:
+                    self.selected_player = None  # Повторный клик снимает выделение
+                else:
+                    self.selected_player = player
+                return True
+        
+        return False
+    
     def find_max_turn(self):
         max_turn = 0
         # Ищем файлы ходов в игровой директории с учетом обоих вариантов именования
@@ -1132,21 +1149,6 @@ class MapVisualizer:
                     if (x-1, y-1) == (cell_x, cell_y) and self.game_objects.get(obj_type, [obj_type])[0] == army_name:
                         return player.get('name')
         return None
-
-    def handle_click(self, pos):
-        """Обработка клика мыши"""
-        # ... существующий код ...
-        
-        # Проверяем клик по цветным прямоугольникам игроков
-        for rect, player in self.player_rects:
-            if rect.collidepoint(pos):
-                if self.selected_player == player:
-                    self.selected_player = None  # Повторный клик снимает выделение
-                else:
-                    self.selected_player = player
-                return True
-        
-        return False
 
     def check_system_encoding(self):
         self.system_encoding = locale.getpreferredencoding()
