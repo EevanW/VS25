@@ -172,7 +172,7 @@ class MapVisualizer:
                                             x = int(parts[1])
                                             y = int(parts[2])
                                             state = int(parts[3].rstrip(',')) if len(parts) > 3 else 0
-                                            obj = (obj_type, x, y, state)
+                                            obj = (obj_type, x, y, state, current_player['color'])
                                             objects.append(obj)
                                             print(f"Найдены объекты {objects}")
                                             if current_player:
@@ -183,9 +183,9 @@ class MapVisualizer:
                                         # Пропускаем неизвестные типы объектов без вывода ошибки
                                         continue
                         
-                        # # Добавляем последнего игрока
-                        # if current_player:
-                        #     players_info.append(current_player)
+                         # Добавляем последнего игрока
+                        if current_player:
+                            players_info.append(current_player)
                         
                         # Сохраняем информацию об игроках
                         self.current_players = players_info
@@ -238,7 +238,7 @@ class MapVisualizer:
         cell_width = self.field_bounds[2] / self.map_width
         cell_height = self.field_bounds[3] / self.map_height
         
-        for obj_type, x, y, state in objects:
+        for obj_type, x, y, state, color in objects:
             # Рассчитываем координаты в оригинальном масштабе
             original_x = self.field_bounds[0] + (x - 1) * cell_width
             original_y = self.field_bounds[1] + (y - 1) * cell_height
@@ -262,8 +262,12 @@ class MapVisualizer:
                 icon_size = int(min(cell_width, cell_height) * scale_x * 0.8)  # 80% размера для армий
             
             # Получаем цвет игрока
-            player_color = self.game_objects[obj_type][1]
-            
+            # Преобразуем число
+            r = (color) & 255
+            g = (color >> 8) & 255
+            b = (color >> 16) & 255
+
+            player_color = (r, g, b)
             # Вычисляем координаты для отрисовки
             circle_center = (int(cell_center_x), int(cell_center_y))
             
@@ -272,7 +276,7 @@ class MapVisualizer:
                 pygame.draw.circle(self.screen, player_color, circle_center, icon_size // 2)
                 
                 # Определяем цвет обводки на основе яркости цвета игрока
-                r, g, b = player_color
+                #r, g, b = player_color
                 brightness = (r + g + b) / 3
                 outline_color = (0, 0, 0) if brightness > 127 else (255, 255, 255)
                 
@@ -445,9 +449,10 @@ class MapVisualizer:
         for player in self.current_players:
             color = player.get('color', 0)
             # Преобразуем число в RGB
-            r = (color >> 16) & 255
+            r = color & 255
             g = (color >> 8) & 255
-            b = color & 255
+            b = (color >> 16) & 255
+
             rect = pygame.Rect(x, self.player_panel_y + 5, 
                              self.color_rect_width, self.color_rect_height)
             pygame.draw.rect(self.screen, (r, g, b), rect)
